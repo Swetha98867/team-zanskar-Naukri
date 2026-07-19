@@ -10,12 +10,12 @@ import java.io.ByteArrayOutputStream;
 public class TemplateBuilder {
 
     private static final String[][] ROWS = {
-        {"email", "remarks"},
-        {"user1@example.com", "primary account"},
-        {"user2@example.com", ""},
-        {"user3@example.com", "backup"},
-        {"user4@example.com", ""},
-        {"user5@example.com", "senior profile"}
+        {"name", "email", "remarks"},
+        {"Arpitha S",   "user1@example.com", "primary account"},
+        {"Rohit Kumar", "user2@example.com", ""},
+        {"Sneha Rao",   "user3@example.com", "backup"},
+        {"Vikas Menon", "user4@example.com", ""},
+        {"Priya N",     "user5@example.com", "senior profile"}
     };
 
     public byte[] build() {
@@ -33,6 +33,7 @@ public class TemplateBuilder {
             }
             sh.autoSizeColumn(0);
             sh.autoSizeColumn(1);
+            sh.autoSizeColumn(2);
             wb.write(out);
             return out.toByteArray();
         } catch (Exception e) {

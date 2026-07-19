@@ -1,11 +1,19 @@
 export type AccountStatus = "OK" | "AUTH_FAILED" | "REQUIRES_MANUAL" | "FAILED" | "SKIPPED";
 
+export interface AccountInput {
+  name: string;
+  email: string;
+}
+
 export interface StartJobRequest {
-  emails: string[];
+  accounts: AccountInput[];
   password: string;
   headless: boolean;
   manualLogin: boolean;
   outputFolder: string;
+  /** Optional path to a folder containing per-account resume files named `<name>*.pdf`.
+   *  When set, the backend skips the Naukri download and uses the local file. */
+  resumeFolderPath?: string;
   baseUrlOverride?: string;
 }
 

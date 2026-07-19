@@ -1,5 +1,6 @@
 package com.adi.naukri.orchestrator;
 
+import com.adi.naukri.api.AccountInput;
 import com.adi.naukri.automation.*;
 import com.adi.naukri.report.*;
 import org.springframework.stereotype.Component;
@@ -34,14 +35,14 @@ public class JobOrchestrator {
     // ------------------------------------------------------------------
 
     private record JobRun(
-            String       jobId,
-            List<String> pendingEmails,
-            String       currentEmail,
-            GateSignal   gateSignal,
-            boolean      stopRequested
+            String              jobId,
+            List<AccountInput>  pendingAccounts,
+            String              currentEmail,
+            GateSignal          gateSignal,
+            boolean             stopRequested
     ) {
         JobRun withStop() {
-            return new JobRun(jobId, pendingEmails, currentEmail, gateSignal, true);
+            return new JobRun(jobId, pendingAccounts, currentEmail, gateSignal, true);
         }
     }
 
@@ -113,7 +114,7 @@ public class JobOrchestrator {
      */
     public JobHandle start(JobRequest req) {
         String jobId = UUID.randomUUID().toString();
-        List<String> pending = new ArrayList<>(req.emails());
+        List<AccountInput> pending = new ArrayList<>(req.accounts());
 
         JobRun newRun = new JobRun(jobId, pending, null, null, false);
         if (!runRef.compareAndSet(null, newRun)) {
@@ -174,11 +175,11 @@ public class JobOrchestrator {
     // ------------------------------------------------------------------
 
     private void executeRun(String jobId, JobRequest req) {
-        List<AccountResult> results   = new ArrayList<>();
-        Instant             runStart  = Instant.now();
-        List<String>        emails    = new ArrayList<>(req.emails());
-        int                 total     = emails.size();
-        boolean             wasStopped = false;   // local flag — not subject to runRef races
+        List<AccountResult>     results    = new ArrayList<>();
+        Instant                 runStart   = Instant.now();
+        List<AccountInput>      accounts   = new ArrayList<>(req.accounts());
+        int                     total      = accounts.size();
+        boolean                 wasStopped = false;   // local flag — not subject to runRef races
 
         eventBus.publish(new JobEvent.RunStarted(jobId, Instant.now(), total));
 
@@ -192,16 +193,24 @@ public class JobOrchestrator {
                 .format(runStart);
         Path runDir = Path.of(req.outputFolder()).resolve(runTimestamp);
 
-        for (int i = 0; i < emails.size(); i++) {
-            String email = emails.get(i);
+        // Resume folder — null when the caller did not enable the local-folder flow;
+        // the automator will fall back to the Naukri download in that case.
+        Path resumeFolder = (req.resumeFolderPath() != null && !req.resumeFolderPath().isBlank())
+                ? Path.of(req.resumeFolderPath())
+                : null;
+
+        for (int i = 0; i < accounts.size(); i++) {
+            AccountInput account = accounts.get(i);
+            String       email   = account.email();
+            String       name    = account.name();
 
             // Check stop flag (read from AtomicReference each iteration)
             JobRun current = runRef.get();
             if (current != null && current.stopRequested()) {
                 wasStopped = true;
                 // Emit SKIPPED for all remaining accounts starting at i
-                for (int j = i; j < emails.size(); j++) {
-                    String skipped = emails.get(j);
+                for (int j = i; j < accounts.size(); j++) {
+                    String skipped = accounts.get(j).email();
                     eventBus.publish(new JobEvent.AccountStarted(jobId, Instant.now(), skipped, j));
                     AccountResult skippedResult = new AccountResult(
                             skipped, AccountStatus.SKIPPED, null,
@@ -219,8 +228,9 @@ public class JobOrchestrator {
 
             eventBus.publish(new JobEvent.AccountStarted(jobId, Instant.now(), email, i));
 
-            AccountResult result = processAccount(jobId, email, req.password(), initialMode,
-                    req.effectiveBaseUrl(), runDir, req.manualLogin(), req.initialDelayMs());
+            AccountResult result = processAccount(jobId, email, name, req.password(), initialMode,
+                    req.effectiveBaseUrl(), runDir, resumeFolder,
+                    req.manualLogin(), req.initialDelayMs());
             results.add(result);
 
             eventBus.publish(new JobEvent.AccountCompleted(
@@ -234,8 +244,8 @@ public class JobOrchestrator {
             if (result.status() == AccountStatus.STOPPED) {
                 wasStopped = true;
                 // Mark all remaining accounts as SKIPPED
-                for (int j = i + 1; j < emails.size(); j++) {
-                    String skipped = emails.get(j);
+                for (int j = i + 1; j < accounts.size(); j++) {
+                    String skipped = accounts.get(j).email();
                     eventBus.publish(new JobEvent.AccountStarted(jobId, Instant.now(), skipped, j));
                     AccountResult skippedResult = new AccountResult(
                             skipped, AccountStatus.SKIPPED, null,
@@ -249,9 +259,11 @@ public class JobOrchestrator {
             }
         }
 
-        // Write report
+        // Write report — capture the inputs used to start this run (password
+        // is never persisted; only whether one was supplied is recorded).
         try {
-            reportWriter.write(runDir, results);
+            RunInputs inputs = RunInputs.from(jobId, runStart, req);
+            reportWriter.write(runDir, inputs, results);
             runRegistry.record(jobId, runDir);
         } catch (Exception ex) {
             // Log but do not suppress run completion event
@@ -286,9 +298,9 @@ public class JobOrchestrator {
      * @param initialDelayMs ms to sleep before launching the browser (0 = disabled)
      */
     private AccountResult processAccount(
-            String jobId, String email, String password,
+            String jobId, String email, String name, String password,
             AutomationRunMode initialMode, String baseUrl, Path runDir,
-            boolean manualLogin, long initialDelayMs) {
+            Path resumeFolder, boolean manualLogin, long initialDelayMs) {
 
         Instant start = Instant.now();
 
@@ -310,6 +322,7 @@ public class JobOrchestrator {
             AutomatorConfig cfg = new AutomatorConfig(
                     baseUrl,
                     runDir,                       // I1: screenshots go under runDir/screenshots/
+                    resumeFolder,                 // null → download from Naukri; non-null → locate local file
                     attempt.timeoutMs(),          // scale page-load with each retry attempt
                     15_000L,
                     25_000L,                      // postLoginActionMs: 25 s for real Naukri hydration
@@ -379,7 +392,7 @@ public class JobOrchestrator {
 
             List<StepResult> stepResults;
             try {
-                stepResults = automator.run(email, password, attempt.mode(), cfg, session, gate, listener);
+                stepResults = automator.run(email, name, password, attempt.mode(), cfg, session, gate, listener);
             } catch (Exception ex) {
                 // If stop was requested and the exception is from aborting the context,
                 // surface a STOPPED status immediately instead of retrying.
@@ -487,14 +500,14 @@ public class JobOrchestrator {
     private void updateEmail(String jobId, String email) {
         runRef.updateAndGet(run -> {
             if (run == null || !run.jobId().equals(jobId)) return run;
-            return new JobRun(run.jobId(), run.pendingEmails(), email, run.gateSignal(), run.stopRequested());
+            return new JobRun(run.jobId(), run.pendingAccounts(), email, run.gateSignal(), run.stopRequested());
         });
     }
 
     private void updateGate(String jobId, GateSignal gate) {
         runRef.updateAndGet(run -> {
             if (run == null || !run.jobId().equals(jobId)) return run;
-            return new JobRun(run.jobId(), run.pendingEmails(), run.currentEmail(), gate, run.stopRequested());
+            return new JobRun(run.jobId(), run.pendingAccounts(), run.currentEmail(), gate, run.stopRequested());
         });
     }
 

@@ -114,6 +114,7 @@ public class NaukriAutomator implements Automator {
     @Override
     public List<StepResult> run(
             String email,
+            String name,
             String password,
             AutomationRunMode mode,
             AutomatorConfig cfg,
@@ -173,22 +174,32 @@ public class NaukriAutomator implements Automator {
                 return results;
             }
 
-            // ── Step 3: DOWNLOAD_RESUME (+ internal RENAME_RESUME) ───────────────
+            // ── Step 3: DOWNLOAD_RESUME (or LOCATE_LOCAL when a folder is set) ───
+            // When cfg.resumeFolderPath() is non-null we skip the browser
+            // interaction entirely and glob the folder for <name>*.pdf. The
+            // step name stays DOWNLOAD_RESUME so the UI + reports remain
+            // consistent across modes.
             listener.onStepStarted(AutomationStep.DOWNLOAD_RESUME);
-            Path[] downloadedFile = new Path[1]; // mutable holder
-            StepResult downloadResult = doDownloadResume(page, email, cfg, downloadedFile, listener, dumpPaths);
+            Path[] resumeFile = new Path[1]; // mutable holder
+            StepResult downloadResult;
+            if (cfg.resumeFolderPath() != null) {
+                downloadResult = doLocateLocalResume(name, cfg, resumeFile, listener);
+            } else {
+                downloadResult = doDownloadResume(page, email, cfg, resumeFile, listener, dumpPaths);
+            }
             results.add(downloadResult);
             listener.onStep(downloadResult);
             if (!downloadResult.ok()) {
                 return results;
             }
 
-            // Rename resume internally (not a separate StepResult per spec)
-            Path renamedFile = downloadedFile[0];
+            // Rename resume internally (not a separate StepResult per spec).
+            // Smart-date replace: <prefix> 15.07.2026 <suffix>.pdf → <prefix> <today>.<suffix>.pdf
+            Path renamedFile = resumeFile[0];
             try {
-                renamedFile = renamer.rename(downloadedFile[0], LocalDate.now());
+                renamedFile = renamer.rename(resumeFile[0], LocalDate.now());
                 log.debug("[{}] Resume renamed: {} -> {}", email,
-                        downloadedFile[0].getFileName(), renamedFile.getFileName());
+                        resumeFile[0].getFileName(), renamedFile.getFileName());
             } catch (Exception e) {
                 log.warn("[{}] Rename failed, using original: {}", email, e.getMessage());
                 // Non-fatal: proceed with original file
@@ -623,6 +634,73 @@ public class NaukriAutomator implements Automator {
     }
 
     /**
+     * Alternative resume-locate flow: instead of downloading from Naukri,
+     * glob {@code cfg.resumeFolderPath()} for {@code <name>*.{pdf,doc,docx,rtf}}
+     * and return the single match. Errors when zero or more than one file
+     * matches — the caller (operator) is expected to keep exactly one resume
+     * per name in the folder.
+     */
+    private StepResult doLocateLocalResume(
+            String name, AutomatorConfig cfg, Path[] out, StepListener listener) {
+
+        long start = System.currentTimeMillis();
+        try {
+            emitSubStep(listener, name == null ? "" : name, "DOWNLOAD_RESUME.locate-local-file");
+
+            Path folder = cfg.resumeFolderPath();
+            if (folder == null) {
+                return StepResult.failure(AutomationStep.DOWNLOAD_RESUME,
+                        "resumeFolderPath not configured", elapsed(start));
+            }
+            if (name == null || name.isBlank()) {
+                return StepResult.failure(AutomationStep.DOWNLOAD_RESUME,
+                        "account name is required to locate a local resume", elapsed(start));
+            }
+            if (!Files.isDirectory(folder)) {
+                return StepResult.failure(AutomationStep.DOWNLOAD_RESUME,
+                        "resume folder does not exist: " + folder, elapsed(start));
+            }
+
+            // Case-insensitive name prefix match with any Naukri-supported extension.
+            String prefix = name.trim().toLowerCase(java.util.Locale.ROOT);
+            List<Path> matches;
+            try (java.util.stream.Stream<Path> stream = Files.list(folder)) {
+                matches = stream
+                        .filter(Files::isRegularFile)
+                        .filter(p -> {
+                            String fn = p.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+                            if (!fn.startsWith(prefix)) return false;
+                            return fn.endsWith(".pdf") || fn.endsWith(".doc")
+                                    || fn.endsWith(".docx") || fn.endsWith(".rtf");
+                        })
+                        .toList();
+            }
+
+            if (matches.isEmpty()) {
+                return StepResult.failure(AutomationStep.DOWNLOAD_RESUME,
+                        "No resume file matching '" + name + "*.{pdf,doc,docx,rtf}' found in " + folder,
+                        elapsed(start));
+            }
+            if (matches.size() > 1) {
+                String list = matches.stream()
+                        .map(p -> p.getFileName().toString())
+                        .collect(java.util.stream.Collectors.joining(", "));
+                return StepResult.failure(AutomationStep.DOWNLOAD_RESUME,
+                        "Multiple resume files match '" + name + "*' in " + folder +
+                        " — keep only one per name. Matches: " + list,
+                        elapsed(start));
+            }
+
+            out[0] = matches.get(0);
+            log.debug("[{}] Located local resume: {}", name, out[0]);
+            return StepResult.success(AutomationStep.DOWNLOAD_RESUME, elapsed(start));
+        } catch (Exception e) {
+            return StepResult.failure(AutomationStep.DOWNLOAD_RESUME,
+                    e.getMessage(), elapsed(start));
+        }
+    }
+
+    /**
      * Extract a filename from a Content-Disposition header value like
      * {@code attachment; filename="Arpitha S 15.07.2026 yahoo.pdf"}. Returns
      * {@code fallback} if none present.
@@ -702,6 +780,18 @@ public class NaukriAutomator implements Automator {
         }
     }
 
+    /**
+     * True when the current URL indicates we've successfully signed out.
+     * Real Naukri may land on either {@code /nlogin/login} (auto-redirect) or
+     * {@code /nlogin/logout} (self-standing "you've been signed out" page);
+     * both are equivalent-successful states. Anything else means we're still
+     * on the app.
+     */
+    private static boolean isLoggedOutUrl(String url) {
+        if (url == null) return false;
+        return url.contains("/nlogin/login") || url.contains("/nlogin/logout");
+    }
+
     private StepResult doLogout(Page page, String email, AutomatorConfig cfg,
             StepListener listener, List<String> dumpPaths) {
         long start = System.currentTimeMillis();
@@ -719,8 +809,9 @@ public class NaukriAutomator implements Automator {
                         email, navMiss.getMessage());
             }
 
-            // If we didn't land on the login page, try the drawer path.
-            if (!page.url().contains("/nlogin/login")) {
+            // If we didn't land on a logged-out URL (either /nlogin/login or
+            // /nlogin/logout is fine), fall back to the drawer path.
+            if (!isLoggedOutUrl(page.url())) {
                 emitSubStep(listener, email, "LOGOUT.open-drawer");
                 boolean drawerOpened = tryOpenLogoutDrawer(page, cfg);
                 if (drawerOpened) {
@@ -744,11 +835,12 @@ public class NaukriAutomator implements Automator {
             }
 
             emitSubStep(listener, email, "LOGOUT.wait-for-login-page");
-            if (!page.url().contains("/nlogin/login")) {
+            if (!isLoggedOutUrl(page.url())) {
                 takeScreenshot(page, email, cfg);
                 dumpDom(page, email, AutomationStep.LOGOUT, cfg, dumpPaths);
                 return StepResult.failure(AutomationStep.LOGOUT,
-                        "Expected redirect to /nlogin/login, got: " + page.url(), elapsed(start));
+                        "Expected to land on /nlogin/login or /nlogin/logout, got: "
+                                + page.url(), elapsed(start));
             }
 
             // ── Complete session teardown ─────────────────────────────────────
@@ -776,7 +868,7 @@ public class NaukriAutomator implements Automator {
 
             return StepResult.success(AutomationStep.LOGOUT, elapsed(start));
         } catch (Exception e) {
-            if (page.url().contains("/nlogin/login")) {
+            if (isLoggedOutUrl(page.url())) {
                 // We got logged out despite the exception; still close browser.
                 try {
                     BrowserContext ctx = currentContextRef.getAndSet(null);

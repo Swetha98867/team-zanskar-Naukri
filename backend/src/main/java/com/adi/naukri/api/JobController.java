@@ -43,11 +43,12 @@ public class JobController {
         // initialDelayMs is optional in the request; fall back to the JobRequest default (3 s).
         long initialDelayMs = (req.initialDelayMs() != null) ? req.initialDelayMs() : 3_000L;
         JobRequest jobReq = new JobRequest(
-                req.emails(),
+                req.accounts(),
                 req.password(),
                 req.headless(),
                 req.manualLogin(),
                 req.outputFolder(),
+                req.resumeFolderPath(),
                 req.baseUrlOverride(),
                 initialDelayMs
         );

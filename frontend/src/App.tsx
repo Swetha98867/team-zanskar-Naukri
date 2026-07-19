@@ -42,17 +42,18 @@ export default function App(): JSX.Element {
   async function handleStart(req: StartJobRequest): Promise<void> {
     setStarting(true);
     setStartError(null);
+    const emails = req.accounts.map(a => a.email);
     try {
       const resp = await startJob(req);
       setCtx({
         jobId: resp.jobId,
-        total: req.emails.length,
+        total: emails.length,
         outputFolder: req.outputFolder,
-        emails: req.emails,
+        emails,
       });
       addJob({
         jobId: resp.jobId,
-        emails: req.emails,
+        emails,
         status: "running",
         outputFolder: req.outputFolder,
       });

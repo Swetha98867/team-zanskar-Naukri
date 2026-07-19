@@ -5,7 +5,9 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.*;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Component
 public class ReportWriter {
@@ -14,12 +16,34 @@ public class ReportWriter {
         "email,status,error,resumeOldName,resumeNewName,startedAt,endedAt,retries";
     private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules();
 
-    public void write(Path runDir, List<AccountResult> results) throws IOException {
+    /**
+     * Write the full run artefacts under {@code runDir}:
+     * <ul>
+     *   <li>{@code inputs.json} — dedicated snapshot of the run inputs (password
+     *       is never persisted; only whether one was supplied is recorded).</li>
+     *   <li>{@code report.json} — object with {@code inputs} and {@code accounts}
+     *       sections so the report is self-contained.</li>
+     *   <li>{@code report.csv} — per-account rows (unchanged shape).</li>
+     *   <li>{@code logs/&lt;email&gt;.log} — per-account plain-text summary.</li>
+     * </ul>
+     */
+    public void write(Path runDir, RunInputs inputs, List<AccountResult> results) throws IOException {
         Files.createDirectories(runDir);
         Files.createDirectories(runDir.resolve("logs"));
-        writeCsv (runDir.resolve("report.csv"),  results);
-        writeJson(runDir.resolve("report.json"), results);
+        writeInputs (runDir.resolve("inputs.json"), inputs);
+        writeCsv    (runDir.resolve("report.csv"),  results);
+        writeJson   (runDir.resolve("report.json"), inputs, results);
         for (AccountResult r : results) writeLog(runDir.resolve("logs").resolve(r.email() + ".log"), r);
+    }
+
+    /** Kept for existing test callers that don't have RunInputs to hand. */
+    public void write(Path runDir, List<AccountResult> results) throws IOException {
+        write(runDir, null, results);
+    }
+
+    private void writeInputs(Path out, RunInputs inputs) throws IOException {
+        if (inputs == null) return;
+        Files.writeString(out, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(inputs));
     }
 
     private void writeCsv(Path out, List<AccountResult> rs) throws IOException {
@@ -37,8 +61,12 @@ public class ReportWriter {
         Files.writeString(out, sb.toString());
     }
 
-    private void writeJson(Path out, List<AccountResult> rs) throws IOException {
-        Files.writeString(out, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(rs));
+    private void writeJson(Path out, RunInputs inputs, List<AccountResult> rs) throws IOException {
+        // Preserve insertion order so `inputs` always appears above `accounts` in the file.
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("inputs",   inputs);   // null when the legacy no-inputs overload was used
+        payload.put("accounts", rs);
+        Files.writeString(out, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(payload));
     }
 
     private void writeLog(Path out, AccountResult r) throws IOException {

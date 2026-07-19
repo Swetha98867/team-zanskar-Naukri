@@ -14,6 +14,7 @@ public class EmailExcelParser {
     private static final Pattern EMAIL = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
     private static final String SHEET = "Emails";
     private static final String HDR_EMAIL = "email";
+    private static final String HDR_NAME = "name";
     private static final String HDR_REMARKS = "remarks";
 
     public List<ParsedEmailRow> parse(InputStream xlsx) {
@@ -23,10 +24,11 @@ public class EmailExcelParser {
             Row header = sh.getRow(0);
             if (header == null) throw new ExcelFormatException("Header row missing");
 
-            int emailCol = -1, remarksCol = -1;
+            int emailCol = -1, nameCol = -1, remarksCol = -1;
             for (Cell c : header) {
                 String v = c.getStringCellValue().trim().toLowerCase(Locale.ROOT);
                 if (v.equals(HDR_EMAIL))   emailCol   = c.getColumnIndex();
+                if (v.equals(HDR_NAME))    nameCol    = c.getColumnIndex();
                 if (v.equals(HDR_REMARKS)) remarksCol = c.getColumnIndex();
             }
             if (emailCol < 0) throw new ExcelFormatException("Missing required header 'email'");
@@ -36,13 +38,14 @@ public class EmailExcelParser {
                 Row row = sh.getRow(r);
                 if (row == null) continue;
                 String email   = cell(row, emailCol);
+                String name    = nameCol    < 0 ? null : cell(row, nameCol);
                 String remarks = remarksCol < 0 ? null : cell(row, remarksCol);
                 if (email == null || email.isBlank()) {
-                    out.add(new ParsedEmailRow(r + 1, "", remarks, false, "empty"));
+                    out.add(new ParsedEmailRow(r + 1, "", name, remarks, false, "empty"));
                 } else if (!EMAIL.matcher(email).matches()) {
-                    out.add(new ParsedEmailRow(r + 1, email, remarks, false, "invalid format"));
+                    out.add(new ParsedEmailRow(r + 1, email, name, remarks, false, "invalid format"));
                 } else {
-                    out.add(new ParsedEmailRow(r + 1, email, remarks, true, null));
+                    out.add(new ParsedEmailRow(r + 1, email, name, remarks, true, null));
                 }
             }
             return out;

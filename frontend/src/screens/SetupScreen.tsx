@@ -10,16 +10,20 @@
  *   • Toggle: "Run browser visibly" (default ON → headless=false)
  *   • Toggle: "⚡ Log in manually for each account" (default OFF)
  *     — turning ON forces headless=false AND disables the headless toggle
- *   • Output folder picker — falls back to a plain text input in dev browser
+ *   • Resume folder picker — path to a folder containing per-account resume
+ *     files named `<Name>*.pdf`. When set, the backend uses the local file
+ *     instead of downloading from Naukri.
+ *   • Output folder picker
  *   • "Download Excel template" link
- *   • Sticky "Start" CTA — enabled when emails.length > 0 AND password ≠ "" AND outputFolder ≠ ""
+ *   • Sticky "Start" CTA — enabled when accounts.length > 0 AND password ≠ ""
+ *     AND outputFolder ≠ "" AND resumeFolderPath ≠ ""
  *   • Live "Required to Start" checklist above the Start button
  *   • Backend health indicator pill
  *
  * Created by: Adikarthik Gupta C B
  */
 import { useState } from "react";
-import type { StartJobRequest } from "../api/types";
+import type { StartJobRequest, AccountInput } from "../api/types";
 import type { ParsedEmailRow } from "../api/types";
 import { downloadTemplate } from "../api/rest";
 import EmailChipInput from "../components/EmailChipInput";
@@ -45,10 +49,8 @@ interface Props {
   busy?: boolean;
 }
 
-/** Marks a required field label with a red asterisk. */
 const Required = () => <span className="ml-1 text-status-fail" aria-hidden="true">*</span>;
 
-/** Single row in the "Required to Start" checklist. */
 function ChecklistItem({ ok, label }: { ok: boolean; label: string }) {
   return (
     <li className="flex items-center gap-2">
@@ -60,43 +62,79 @@ function ChecklistItem({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Fallback name from an email address: local-part with dots/underscores → spaces, title-cased. */
+function nameFromEmail(email: string): string {
+  const local = email.split("@")[0] ?? email;
+  return local
+    .replace(/[._-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ") || local;
+}
+
 export default function SetupScreen({ onStart, busy = false }: Props) {
-  const [tab, setTab]                   = useState<Tab>("excel");
-  const [excelEmails, setExcelEmails]   = useState<string[]>([]);
-  const [manualEmails, setManualEmails] = useState<string[]>([]);
-  const [password, setPassword]         = useState("");
-  const [visible, setVisible]           = useState(true);   // "Run browser visibly" ON = headless false
-  const [manualLogin, setManualLogin]   = useState(false);
-  const [outputFolder, setOutputFolder] = useState("");
+  const [tab, setTab]                       = useState<Tab>("excel");
+  const [excelAccounts, setExcelAccounts]   = useState<AccountInput[]>([]);
+  const [manualAccounts, setManualAccounts] = useState<AccountInput[]>([]);
+  const [password, setPassword]             = useState("");
+  const [visible, setVisible]               = useState(true);
+  const [manualLogin, setManualLogin]       = useState(false);
+  const [outputFolder, setOutputFolder]     = useState("");
+  const [resumeFolderPath, setResumeFolderPath] = useState("");
 
   const beHealth = useBackendHealth();
 
-  const emails = tab === "excel" ? excelEmails : manualEmails;
+  const accounts = tab === "excel" ? excelAccounts : manualAccounts;
   const headless = manualLogin ? false : !visible;
 
   const canStart =
-    emails.length > 0 &&
+    accounts.length > 0 &&
     password.trim() !== "" &&
-    outputFolder.trim() !== "";
+    outputFolder.trim() !== "" &&
+    resumeFolderPath.trim() !== "";
 
   function handleParsed(rows: ParsedEmailRow[]) {
-    setExcelEmails(rows.map(r => r.email).filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)));
+    const valid = rows.filter(r => EMAIL_RE.test(r.email));
+    setExcelAccounts(valid.map(r => ({
+      email: r.email,
+      name: (r.name && r.name.trim()) ? r.name.trim() : nameFromEmail(r.email),
+    })));
   }
 
-  async function handlePickFolder() {
+  async function handlePickFolder(setter: (v: string) => void) {
     if (window.electronAPI?.pickFolder) {
       const chosen = await window.electronAPI.pickFolder();
-      if (chosen) setOutputFolder(chosen);
+      if (chosen) setter(chosen);
     }
   }
 
   function handleStart() {
     if (!canStart) {
-      console.warn("[Setup] Start clicked but canStart is false", { emails: emails.length, hasPassword: password.length > 0, outputFolder });
+      console.warn("[Setup] Start clicked but canStart is false", {
+        accountCount: accounts.length,
+        hasPassword: password.length > 0,
+        outputFolder,
+        resumeFolderPath,
+      });
       return;
     }
-    console.info("[Setup] Start clicked, dispatching to App.handleStart", { emailCount: emails.length, headless, manualLogin });
-    onStart({ emails, password, headless, manualLogin, outputFolder });
+    console.info("[Setup] Start clicked, dispatching to App.handleStart", {
+      accountCount: accounts.length,
+      headless,
+      manualLogin,
+      resumeFolderPath,
+    });
+    onStart({
+      accounts,
+      password,
+      headless,
+      manualLogin,
+      outputFolder,
+      resumeFolderPath,
+    });
   }
 
   return (
@@ -112,7 +150,7 @@ export default function SetupScreen({ onStart, busy = false }: Props) {
       {/* ── "Naukri accounts *" label above tab bar ── */}
       <div>
         <p className="text-sm text-text-muted mb-2">
-          Naukri accounts<Required />
+          Naukri accounts (name + email)<Required />
         </p>
 
         {/* ── Tab bar ── */}
@@ -150,7 +188,7 @@ export default function SetupScreen({ onStart, busy = false }: Props) {
               </button>
             </div>
           ) : (
-            <EmailChipInput value={manualEmails} onChange={setManualEmails} />
+            <EmailChipInput value={manualAccounts} onChange={setManualAccounts} />
           )}
         </div>
       </div>
@@ -204,6 +242,37 @@ export default function SetupScreen({ onStart, busy = false }: Props) {
         </label>
       </div>
 
+      {/* ── Resume folder ── */}
+      <div className="flex flex-col gap-1">
+        <label htmlFor="resume-folder-field" className="text-sm text-text-muted">
+          Resume folder<Required />
+          <span className="ml-2 text-xs text-text-muted/70">
+            (folder with per-account resume files named <code>&lt;Name&gt;*.pdf</code>)
+          </span>
+        </label>
+        <div className="flex gap-2">
+          <input
+            id="resume-folder-field"
+            data-testid="resume-folder"
+            type="text"
+            readOnly={!!window.electronAPI}
+            className="input flex-1"
+            placeholder="C:\resumes"
+            value={resumeFolderPath}
+            onChange={e => !window.electronAPI && setResumeFolderPath(e.target.value)}
+          />
+          {window.electronAPI && (
+            <button
+              type="button"
+              className="btn-secondary text-sm px-3"
+              onClick={() => handlePickFolder(setResumeFolderPath)}
+            >
+              Browse&#x2026;
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* ── Output folder ── */}
       <div className="flex flex-col gap-1">
         <label htmlFor="output-folder-field" className="text-sm text-text-muted">
@@ -224,7 +293,7 @@ export default function SetupScreen({ onStart, busy = false }: Props) {
             <button
               type="button"
               className="btn-secondary text-sm px-3"
-              onClick={handlePickFolder}
+              onClick={() => handlePickFolder(setOutputFolder)}
             >
               Browse&#x2026;
             </button>
@@ -236,8 +305,9 @@ export default function SetupScreen({ onStart, busy = false }: Props) {
       <div className="mt-2 rounded-lg border border-white/10 bg-white/[0.02] px-4 py-3">
         <p className="text-xs font-mono uppercase tracking-widest text-text-muted mb-2">Required to Start</p>
         <ul className="space-y-1 text-sm">
-          <ChecklistItem ok={emails.length > 0} label={`At least one email (${emails.length} added)`} />
+          <ChecklistItem ok={accounts.length > 0} label={`At least one account (${accounts.length} added)`} />
           <ChecklistItem ok={password.trim().length > 0} label="Naukri password" />
+          <ChecklistItem ok={resumeFolderPath.trim().length > 0} label="Resume folder" />
           <ChecklistItem ok={outputFolder.trim().length > 0} label="Output folder" />
         </ul>
       </div>

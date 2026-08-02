@@ -11,7 +11,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-
+import com.adi.naukri.api.AccountInput;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -58,7 +58,7 @@ class JobOrchestratorAbortTest {
             private volatile Thread runnerThread;
 
             @Override
-            public List<StepResult> run(String email, String password,
+            public List<StepResult> run(String email,String name, String password,
                                         AutomationRunMode mode, AutomatorConfig cfg,
                                         PlaywrightSession session, ManualLoginGate gate,
                                         StepListener listener) {
@@ -102,8 +102,9 @@ class JobOrchestratorAbortTest {
         });
 
         JobRequest req = new JobRequest(
-                List.of("slow@test.com"), "pw", false, false,
-                tempDir.toString(), null);
+                 List.of(new AccountInput("Test User", "slow@test.com")),
+		"pw", false, false,
+                tempDir.toString(),null, null);
 
         JobHandle handle = orchestrator.start(req);
 

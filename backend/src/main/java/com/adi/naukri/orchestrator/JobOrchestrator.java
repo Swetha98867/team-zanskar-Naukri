@@ -334,6 +334,7 @@ public class JobOrchestrator {
             updateGate(jobId, gateSignal);
 
             ManualLoginGate gate = (e, timeout, dashboardReached) -> {
+				System.out.println(">>> ManualLoginGate invoked for: " + e);
                 if (gateSignal == null) return true;
 
                 // Single publish of AwaitManualLogin per attempt (gate lambda is the sole emitter;

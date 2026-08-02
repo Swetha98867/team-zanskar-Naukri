@@ -45,12 +45,17 @@ class JobControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                             {
-                              "emails":["a@x.com"],
-                              "password":"p",
-                              "headless":false,
-                              "manualLogin":false,
-                              "outputFolder":"C:\\\\tmp\\\\r"
-                            }
+								"accounts": [
+									{
+										"name": "User1",
+										"email": "a@x.com"
+									}
+								],
+								"password": "pass",
+								"headless": false,
+								"manualLogin": false,
+								"outputFolder": "C:\\tmp\\r"
+							}
                         """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.jobId").value("job-123"))
@@ -100,7 +105,7 @@ class JobControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                             {
-                              "emails":[],
+							  "accounts":[],
                               "password":"p",
                               "headless":false,
                               "manualLogin":false,
@@ -120,12 +125,17 @@ class JobControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                             {
-                              "emails":["a@x.com"],
-                              "password":"   ",
-                              "headless":false,
-                              "manualLogin":false,
-                              "outputFolder":"C:\\\\tmp"
-                            }
+								"accounts":[
+									{
+										"name":"User1",
+										"email":"a@x.com"
+									}
+								],
+								"password":"   ",
+								"headless":false,
+								"manualLogin":false,
+								"outputFolder":"C:\\tmp"
+							}
                         """))
                 .andExpect(status().isBadRequest());
     }
@@ -143,12 +153,17 @@ class JobControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                             {
-                              "emails":["a@x.com"],
-                              "password":"pass",
-                              "headless":false,
-                              "manualLogin":false,
-                              "outputFolder":"C:\\\\tmp\\\\r"
-                            }
+								"accounts":[
+									{
+										"name":"User1",
+										"email":"a@x.com"
+									}
+								],
+								"password":"pass",
+								"headless":false,
+								"manualLogin":false,
+								"outputFolder":"C:\\tmp\\r"
+							}
                         """))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("job-already-running"));

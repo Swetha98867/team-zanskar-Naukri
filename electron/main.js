@@ -89,16 +89,7 @@ ipcMain.handle('openFolder', async (_event, folderPath) => {
 });
 
 app.whenReady().then(async () => {
-  try {
-    javaProcess = spawnBackend();
-    // Wait up to 60 s for the backend to announce its port
-    const port = await waitForPort(javaProcess, 60_000);
-    await createWindow(port);
-  } catch (err) {
-    console.error('[electron] Startup error:', err.message);
-    // Still open a window so the user sees something; renderer will handle empty port
-    await createWindow(0);
-  }
+  await createWindow(8000);
 });
 
 app.on('window-all-closed', () => {

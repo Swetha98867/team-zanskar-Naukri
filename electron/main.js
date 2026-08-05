@@ -18,24 +18,25 @@ const e2eMockUrl = e2eMockArg ? e2eMockArg.slice('--e2e-mock='.length) : null;
  * In dev, falls back to the local backend/target jar.
  */
 function spawnBackend() {
-  const resourcesPath = process.resourcesPath || path.join(__dirname, '..');
-  const javaExe = path.join(resourcesPath, 'jre', 'bin', 'javaw.exe');
-  const jar = path.join(resourcesPath, 'backend', 'naukri-be.jar');
 
-  const child = spawn(javaExe, ['-jar', jar, '--server.port=0'], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+    if (!app.isPackaged) {
+        return null;
+    }
 
-  child.stderr.on('data', (d) => {
-    // Surface stderr to the main-process console for debugging
-    process.stderr.write(d);
-  });
+    const resourcesPath = process.resourcesPath;
 
-  child.on('error', (err) => {
-    console.error('[electron] Failed to start backend:', err.message);
-  });
+    const javaExe = path.join(resourcesPath, "jre", "bin", "javaw.exe");
 
-  return child;
+    const jar = path.join(resourcesPath, "backend", "naukri-be.jar");
+
+    return spawn(javaExe, [
+        "-jar",
+        jar,
+        "--server.port=0"
+    ], {
+        stdio: ["ignore","pipe","pipe"]
+    });
+
 }
 
 async function createWindow(port) {
@@ -89,11 +90,7 @@ ipcMain.handle('openFolder', async (_event, folderPath) => {
 });
 
 app.whenReady().then(async () => {
-  await createWindow(8000);
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+    await createWindow(8000);
 });
 
 app.on('will-quit', () => {

@@ -6,7 +6,6 @@ pipeline {
         jdk 'JDK17'
         maven 'Maven-3.9.16'
         nodejs 'NodeJS-24'
-
     }
 
     environment {
@@ -18,7 +17,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 git branch: 'main',
-                url: 'https://github.com/Swetha98867/team-zanskar-Naukri.git'
+                    url: 'https://github.com/Swetha98867/team-zanskar-Naukri.git'
             }
         }
 
@@ -63,21 +62,23 @@ pipeline {
                 }
             }
         }
-        stage('Prepare Bundled JRE') {
-                steps {
-                    bat '''
-                    if not exist "electron\\resources\\jre" mkdir "electron\\resources\\jre"
 
-                    xcopy "C:\\Tools\\Naukri\\jre\\*" "electron\\resources\\jre\\" /E /I /Y
-                    '''
-                }
+        stage('Prepare Bundled JRE') {
+            steps {
+                bat '''
+                if not exist "electron\\resources\\jre" mkdir "electron\\resources\\jre"
+
+                xcopy "C:\\Tools\\Naukri\\jre\\*" "electron\\resources\\jre\\" /E /I /Y
+                '''
+            }
         }
+
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') {
                     dir('backend') {
-                         bat '''
-                         mvn sonar:sonar ^
+                        bat '''
+                        mvn sonar:sonar ^
                         -Dsonar.projectKey=Naukri ^
                         -Dsonar.projectName=Naukri ^
                         -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
@@ -94,25 +95,29 @@ pipeline {
                 }
             }
         }
+
         stage('Verify Electron Resources') {
             steps {
-            bat '''
-            echo Checking bundled JRE...
-            if not exist "electron\\resources\\jre\\bin\\java.exe" (
-            echo ERROR: Bundled Java runtime is missing!
-            exit /b 1
-           )
+                bat '''
+                echo Checking bundled JRE...
 
-           echo Checking backend JAR...
-           if not exist "backend\\target\\naukri-be.jar" (
-            echo ERROR: Backend JAR is missing!
-            exit /b 1
-           )
+                if not exist "electron\\resources\\jre\\bin\\java.exe" (
+                    echo ERROR: Bundled Java runtime is missing!
+                    exit /b 1
+                )
 
-           echo Bundled JRE and backend JAR are present.
-           '''
-         }
-       }
+                echo Checking backend JAR...
+
+                if not exist "backend\\target\\naukri-be.jar" (
+                    echo ERROR: Backend JAR is missing!
+                    exit /b 1
+                )
+
+                echo Bundled JRE and backend JAR are present.
+                '''
+            }
+        }
+
         stage('Electron Package') {
             steps {
                 dir('electron') {
@@ -123,30 +128,39 @@ pipeline {
 
         stage('Archive Artifacts') {
             steps {
-                archiveArtifacts artifacts: '''
-backend/target/*.jar,
-dist/**/*.exe,
-dist/**/*.zip
-''', fingerprint: true
+                archiveArtifacts artifacts: 'backend/target/*.jar,dist/**/*.exe,dist/**/*.zip',
+                    fingerprint: true
             }
         }
 
         stage('Deploy') {
-    steps {
-        bat '''
-        if not exist "C:\\Deployments\\Naukri" mkdir "C:\\Deployments\\Naukri"
+            steps {
+                bat '''
+                if not exist "C:\\Deployments\\Naukri" mkdir "C:\\Deployments\\Naukri"
 
-        del /Q "C:\\Deployments\\Naukri\\*.exe" 2>NUL
-        del /Q "C:\\Deployments\\Naukri\\*.jar" 2>NUL
+                echo Removing old deployment files...
 
-        copy /Y backend\\target\\*.jar "C:\\Deployments\\Naukri\\"
-        copy /Y dist\\*.exe "C:\\Deployments\\Naukri\\"
+                del /Q "C:\\Deployments\\Naukri\\*.exe" 2>NUL
+                del /Q "C:\\Deployments\\Naukri\\*.jar" 2>NUL
 
-        echo ===== DEPLOYED FILES =====
-        dir "C:\\Deployments\\Naukri"
-        '''
+                echo Copying backend JAR...
+
+                copy /Y backend\\target\\*.jar "C:\\Deployments\\Naukri\\"
+
+                echo Copying Electron EXE files...
+
+                copy /Y dist\\*.exe "C:\\Deployments\\Naukri\\"
+
+                echo.
+                echo ====================================
+                echo DEPLOYED FILES
+                echo ====================================
+
+                dir "C:\\Deployments\\Naukri"
+                '''
+            }
+        }
     }
-}
 
     post {
 
@@ -164,5 +178,4 @@ dist/**/*.zip
             cleanWs()
         }
     }
-
 }

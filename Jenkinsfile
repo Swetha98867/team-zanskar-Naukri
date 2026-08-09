@@ -63,7 +63,15 @@ pipeline {
                 }
             }
         }
+        stage('Prepare Bundled JRE') {
+                steps {
+                    bat '''
+                    if not exist "electron\\resources\\jre" mkdir "electron\\resources\\jre"
 
+                    xcopy "C:\\Tools\\Naukri\\jre\\*" "electron\\resources\\jre\\" /E /I /Y
+                    '''
+                }
+        }
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') {
@@ -86,7 +94,25 @@ pipeline {
                 }
             }
         }
+        stage('Verify Electron Resources') {
+            steps {
+            bat '''
+            echo Checking bundled JRE...
+            if not exist "electron\\resources\\jre\\bin\\java.exe" (
+            echo ERROR: Bundled Java runtime is missing!
+            exit /b 1
+           )
 
+           echo Checking backend JAR...
+           if not exist "backend\\target\\naukri-be.jar" (
+            echo ERROR: Backend JAR is missing!
+            exit /b 1
+           )
+
+           echo Bundled JRE and backend JAR are present.
+           '''
+         }
+       }
         stage('Electron Package') {
             steps {
                 dir('electron') {

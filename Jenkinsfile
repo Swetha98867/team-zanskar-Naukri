@@ -3,8 +3,10 @@ pipeline {
     agent any
 
     tools {
-        jdk 'JDK'
-        maven 'Maven'
+        jdk 'JDK17'
+        maven 'Maven-3.9.16'
+        nodejs 'NodeJS-24'
+
     }
 
     environment {
@@ -69,8 +71,8 @@ pipeline {
                     dir('backend') {
                          bat '''
                          mvn sonar:sonar ^
-                        -Dsonar.projectKey=naukri-be ^
-                        -Dsonar.projectName=naukri-be
+                        -Dsonar.projectKey=Naukri ^
+                        -Dsonar.projectName=Naukri
                         -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
                         '''
                     }

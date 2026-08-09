@@ -5,12 +5,11 @@ pipeline {
     tools {
         jdk 'JDK17'
         maven 'Maven-3.9.16'
-        nodejs 'NodeJS-24'
+        nodejs 'NodeJS-22'
 
     }
 
     environment {
-        SONARQUBE = 'SonarQube'
         DEPLOY_DIR = 'D:\\Deployments\\Naukri'
     }
 
@@ -72,7 +71,7 @@ pipeline {
                          bat '''
                          mvn sonar:sonar ^
                         -Dsonar.projectKey=Naukri ^
-                        -Dsonar.projectName=Naukri
+                        -Dsonar.projectName=Naukri ^
                         -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
                         '''
                     }
@@ -108,14 +107,14 @@ dist/**/*.zip
 
         stage('Deploy') {
             steps {
-                bat '''
-                if not exist "C:\\Deployments\\Naukri" mkdir "C:\\Deployments\\Naukri"
+                    bat '''
+                    if not exist "%DEPLOY_DIR%" mkdir "%DEPLOY_DIR%"
 
-                copy backend\\target\\*.jar "C:\\Deployments\\Naukri\\"
-                copy dist\\*.exe "C:\\Deployments\\Naukri\\"
-                '''
+                    copy backend\\target\\*.jar "%DEPLOY_DIR%\\"
+                    copy dist\\*.exe "%DEPLOY_DIR%\\"
+                    '''
+                }
             }
-        }
     }
 
     post {

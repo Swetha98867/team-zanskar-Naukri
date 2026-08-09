@@ -10,7 +10,7 @@ pipeline {
     }
 
     environment {
-        DEPLOY_DIR = 'D:\\Deployments\\Naukri'
+        DEPLOY_DIR = 'C:\\Deployments\\Naukri'
     }
 
     stages {

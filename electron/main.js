@@ -19,24 +19,57 @@ const e2eMockUrl = e2eMockArg ? e2eMockArg.slice('--e2e-mock='.length) : null;
  */
 function spawnBackend() {
 
-    if (!app.isPackaged) {
-        return null;
+    let javaExe;
+    let jar;
+
+    if (app.isPackaged) {
+
+        // Installed application
+        const resourcesPath = process.resourcesPath;
+
+        javaExe = path.join(
+            resourcesPath,
+            'jre',
+            'bin',
+            'java.exe'
+        );
+
+        jar = path.join(
+            resourcesPath,
+            'backend',
+            'naukri-be.jar'
+        );
+
+    } else {
+
+        // Development mode
+        javaExe = path.join(
+            __dirname,
+            'resources',
+            'jre',
+            'bin',
+            'java.exe'
+        );
+
+        jar = path.join(
+            __dirname,
+            '..',
+            'backend',
+            'target',
+            'naukri-be.jar'
+        );
     }
 
-    const resourcesPath = process.resourcesPath;
-
-    const javaExe = path.join(resourcesPath, "jre", "bin", "javaw.exe");
-
-    const jar = path.join(resourcesPath, "backend", "naukri-be.jar");
+    console.log('[backend] Java:', javaExe);
+    console.log('[backend] JAR:', jar);
 
     return spawn(javaExe, [
-        "-jar",
+        '-jar',
         jar,
-        "--server.port=0"
+        '--server.port=0'
     ], {
-        stdio: ["ignore","pipe","pipe"]
+        stdio: ['ignore', 'pipe', 'pipe']
     });
-
 }
 
 async function createWindow(port) {
@@ -61,6 +94,27 @@ async function createWindow(port) {
     query.e2eMock = e2eMockUrl;
   }
   mainWindow.loadFile(indexPath, { query });
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.error('[renderer] Failed to load:', {
+        errorCode,
+        errorDescription,
+        validatedURL
+    });
+  });
+
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[renderer] ${message}`);
+  });
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.error('[renderer] Failed to load:', {
+        errorCode,
+        errorDescription,
+        validatedURL
+       });
+    });
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[renderer] ${message}`);
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -90,7 +144,41 @@ ipcMain.handle('openFolder', async (_event, folderPath) => {
 });
 
 app.whenReady().then(async () => {
-    await createWindow(8000);
+    try {
+        javaProcess = spawnBackend();
+
+        if (!javaProcess) {
+            throw new Error('Backend process could not be started');
+        }
+
+        javaProcess.stdout.on('data', (data) => {
+            console.log(`[backend] ${data}`);
+        });
+
+        javaProcess.stderr.on('data', (data) => {
+            console.error(`[backend] ${data}`);
+        });
+
+        javaProcess.on('error', (error) => {
+            console.error('[backend] Process error:', error);
+        });
+
+        const port = await waitForPort(javaProcess, 30000);
+
+        console.log(`[backend] Started on port ${port}`);
+
+        await createWindow(port);
+
+    } catch (error) {
+        console.error('[backend] Failed to start:', error);
+
+        dialog.showErrorBox(
+            'Backend Startup Failed',
+            `Naukri backend could not be started.\n\n${error.message}`
+        );
+
+        app.quit();
+    }
 });
 
 app.on('will-quit', () => {

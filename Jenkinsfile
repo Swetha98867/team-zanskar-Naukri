@@ -132,16 +132,21 @@ dist/**/*.zip
         }
 
         stage('Deploy') {
-            steps {
-                    bat '''
-                    if not exist "%DEPLOY_DIR%" mkdir "%DEPLOY_DIR%"
+    steps {
+        bat '''
+        if not exist "C:\\Deployments\\Naukri" mkdir "C:\\Deployments\\Naukri"
 
-                    copy backend\\target\\*.jar "%DEPLOY_DIR%\\"
-                    copy dist\\*.exe "%DEPLOY_DIR%\\"
-                    '''
-                }
-            }
+        del /Q "C:\\Deployments\\Naukri\\*.exe" 2>NUL
+        del /Q "C:\\Deployments\\Naukri\\*.jar" 2>NUL
+
+        copy /Y backend\\target\\*.jar "C:\\Deployments\\Naukri\\"
+        copy /Y dist\\*.exe "C:\\Deployments\\Naukri\\"
+
+        echo ===== DEPLOYED FILES =====
+        dir "C:\\Deployments\\Naukri"
+        '''
     }
+}
 
     post {
 

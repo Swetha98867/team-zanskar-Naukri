@@ -1,0 +1,403 @@
+pipeline {
+
+    agent any
+
+    tools {
+        jdk 'JDK21'
+        maven 'Maven-3.9.16'
+        nodejs 'NodeJS-24'
+    }
+
+    environment {
+        DEPLOY_DIR = 'C:\\Deployments\\Naukri'
+
+        AZURE_STORAGE_ACCOUNT = 'naukribuildartifacts'
+        BACKEND_CONTAINER = 'backend-artifacts'
+        FRONTEND_CONTAINER = 'frontend-artifacts'
+    }
+
+    stages {
+
+        // ==========================================================
+        // 1. CHECKOUT
+        // ==========================================================
+
+        stage('Checkout') {
+            steps {
+
+                git branch: 'main',
+                    credentialsId: 'github-naukri',
+                    url: 'https://github.com/Swetha98867/team-zanskar-Naukri.git'
+            }
+        }
+
+
+        // ==========================================================
+        // 2. BUILD & TEST
+        // ==========================================================
+
+        stage('Build & Test') {
+            steps {
+
+                echo '===================================='
+                echo 'BACKEND BUILD'
+                echo '===================================='
+
+                dir('backend') {
+                    bat 'mvn clean verify'
+                }
+
+
+                echo '===================================='
+                echo 'BACKEND TEST'
+                echo '===================================='
+
+                dir('backend') {
+                    bat 'mvn test'
+                }
+
+
+                echo '===================================='
+                echo 'FRONTEND BUILD'
+                echo '===================================='
+
+                dir('frontend') {
+                    bat 'npm install'
+                    bat 'npm run build'
+                }
+
+
+                echo '===================================='
+                echo 'VERIFY BUILD ARTIFACTS'
+                echo '===================================='
+
+                bat '''
+                if not exist "backend\\target\\naukri-be.jar" (
+                    echo ERROR: Backend JAR not found!
+                    exit /b 1
+                )
+
+                if not exist "frontend\\dist\\index.html" (
+                    echo ERROR: Frontend build not found!
+                    exit /b 1
+                )
+
+                echo Backend JAR and Frontend artifacts are available.
+                '''
+            }
+        }
+
+
+        // ==========================================================
+        // 3. ELECTRON PACKAGE PREPARATION
+        // ==========================================================
+
+        stage('Electron Package Preparation') {
+            steps {
+
+                echo '===================================='
+                echo 'COPY FRONTEND TO ELECTRON'
+                echo '===================================='
+
+                bat '''
+                if exist "electron\\renderer" (
+                    rmdir /S /Q "electron\\renderer"
+                )
+
+                xcopy "frontend\\dist" "electron\\renderer" /E /I /Y
+
+                if errorlevel 1 (
+                    echo ERROR: Failed to copy frontend to Electron.
+                    exit /b 1
+                )
+                '''
+
+
+                echo '===================================='
+                echo 'INSTALL ELECTRON DEPENDENCIES'
+                echo '===================================='
+
+                dir('electron') {
+                    bat 'npm install'
+                }
+
+
+                echo '===================================='
+                echo 'PREPARE BUNDLED JRE'
+                echo '===================================='
+
+                bat '''
+                if not exist "C:\\Tools\\Naukri\\jre\\bin\\java.exe" (
+                    echo ERROR: Bundled JRE not found!
+                    echo Expected:
+                    echo C:\\Tools\\Naukri\\jre\\bin\\java.exe
+                    exit /b 1
+                )
+
+                if not exist "electron\\resources\\jre" (
+                    mkdir "electron\\resources\\jre"
+                )
+
+                xcopy "C:\\Tools\\Naukri\\jre\\*" ^
+                      "electron\\resources\\jre\\" ^
+                      /E /I /Y
+
+                if errorlevel 1 (
+                    echo ERROR: Failed to copy bundled JRE.
+                    exit /b 1
+                )
+
+                echo Bundled JRE copied successfully.
+                '''
+
+
+                echo '===================================='
+                echo 'VERIFY ELECTRON RESOURCES'
+                echo '===================================='
+
+                bat '''
+                if not exist "electron\\resources\\jre\\bin\\java.exe" (
+                    echo ERROR: Electron JRE missing!
+                    exit /b 1
+                )
+
+                if not exist "backend\\target\\naukri-be.jar" (
+                    echo ERROR: Backend JAR missing!
+                    exit /b 1
+                )
+
+                echo Electron resources verified successfully.
+                '''
+            }
+        }
+
+
+        // ==========================================================
+        // 4. SONARQUBE + QUALITY GATE
+        // ==========================================================
+
+        stage('SonarQube + Quality Gate') {
+            steps {
+
+                echo '===================================='
+                echo 'SONARQUBE ANALYSIS'
+                echo '===================================='
+
+                withSonarQubeEnv('SonarQube') {
+
+                    dir('backend') {
+
+                        bat '''
+                        mvn sonar:sonar ^
+                        -Dsonar.projectKey=Naukri ^
+                        -Dsonar.projectName=Naukri ^
+                        -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                        '''
+                    }
+                }
+
+
+                echo '===================================='
+                echo 'WAITING FOR QUALITY GATE'
+                echo '===================================='
+
+                timeout(time: 10, unit: 'MINUTES') {
+
+                    waitForQualityGate abortPipeline: true
+                }
+
+                echo '===================================='
+                echo 'QUALITY GATE PASSED'
+                echo '===================================='
+            }
+        }
+
+
+        // ==========================================================
+        // 5. PACKAGE & ARCHIVE
+        // ==========================================================
+
+        stage('Package & Archive') {
+            steps {
+
+                echo '===================================='
+                echo 'BUILDING ELECTRON APPLICATION'
+                echo '===================================='
+
+                dir('electron') {
+
+                    bat 'npm run dist'
+                }
+
+
+                echo '===================================='
+                echo 'ARCHIVING JENKINS ARTIFACTS'
+                echo '===================================='
+
+                archiveArtifacts(
+                    artifacts: 'backend/target/*.jar,dist/**/*.exe,dist/**/*.zip',
+                    fingerprint: true
+                )
+
+                echo 'Artifacts archived successfully.'
+            }
+        }
+
+
+        // ==========================================================
+        // 6. UPLOAD ARTIFACTS TO AZURE STORAGE
+        // ==========================================================
+
+        stage('Upload Artifacts to Azure Storage') {
+            steps {
+
+                echo '===================================='
+                echo 'AZURE LOGIN'
+                echo '===================================='
+
+                bat '''
+                az login --identity
+
+                if errorlevel 1 (
+                    echo ERROR: Azure Managed Identity login failed.
+                    exit /b 1
+                )
+
+                echo Azure login successful.
+                '''
+
+
+                echo '===================================='
+                echo 'UPLOAD BACKEND ARTIFACT'
+                echo '===================================='
+
+                bat '''
+                az storage blob upload ^
+                    --account-name %AZURE_STORAGE_ACCOUNT% ^
+                    --container-name %BACKEND_CONTAINER% ^
+                    --name naukri-be.jar ^
+                    --file "backend\\target\\naukri-be.jar" ^
+                    --auth-mode login ^
+                    --overwrite true
+
+                if errorlevel 1 (
+                    echo ERROR: Backend upload failed.
+                    exit /b 1
+                )
+
+                echo Backend artifact uploaded successfully.
+                '''
+
+
+                echo '===================================='
+                echo 'UPLOAD FRONTEND ARTIFACTS'
+                echo '===================================='
+
+                bat '''
+                az storage blob upload-batch ^
+                    --account-name %AZURE_STORAGE_ACCOUNT% ^
+                    --destination %FRONTEND_CONTAINER% ^
+                    --source "frontend\\dist" ^
+                    --auth-mode login ^
+                    --overwrite
+
+                if errorlevel 1 (
+                    echo ERROR: Frontend upload failed.
+                    exit /b 1
+                )
+
+                echo Frontend artifacts uploaded successfully.
+                '''
+            }
+        }
+
+
+        // ==========================================================
+        // 7. DEPLOY
+        // ==========================================================
+
+        stage('Deploy') {
+            steps {
+
+                echo '===================================='
+                echo 'LOCAL DEPLOYMENT'
+                echo '===================================='
+
+                bat '''
+                if not exist "%DEPLOY_DIR%" (
+                    mkdir "%DEPLOY_DIR%"
+                )
+
+                echo Removing old deployment files...
+
+                del /Q "%DEPLOY_DIR%\\*.exe" 2>NUL
+                del /Q "%DEPLOY_DIR%\\*.jar" 2>NUL
+
+
+                echo Copying backend JAR...
+
+                copy /Y backend\\target\\*.jar "%DEPLOY_DIR%\\"
+
+                if errorlevel 1 (
+                    echo ERROR: Backend deployment failed.
+                    exit /b 1
+                )
+
+
+                echo Copying Electron EXE...
+
+                copy /Y dist\\*.exe "%DEPLOY_DIR%\\"
+
+                if errorlevel 1 (
+                    echo ERROR: Electron deployment failed.
+                    exit /b 1
+                )
+
+
+                echo.
+                echo ====================================
+                echo DEPLOYED FILES
+                echo ====================================
+
+                dir "%DEPLOY_DIR%"
+
+                echo.
+                echo ====================================
+                echo DEPLOYMENT SUCCESSFUL
+                echo ====================================
+                '''
+            }
+        }
+    }
+
+
+    // ==========================================================
+    // POST ACTIONS
+    // ==========================================================
+
+    post {
+
+        success {
+
+            echo '''
+            ==========================================
+            NAUKRI CI/CD PIPELINE SUCCESSFUL
+            ==========================================
+            '''
+        }
+
+        failure {
+
+            echo '''
+            ==========================================
+            NAUKRI CI/CD PIPELINE FAILED
+            ==========================================
+            '''
+        }
+
+        always {
+
+            cleanWs()
+        }
+    }
+}

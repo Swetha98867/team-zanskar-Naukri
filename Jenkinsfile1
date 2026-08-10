@@ -26,7 +26,6 @@ pipeline {
             steps {
 
                 git branch: 'main',
-                    credentialsId: 'github-naukri',
                     url: 'https://github.com/Swetha98867/team-zanskar-Naukri.git'
             }
         }

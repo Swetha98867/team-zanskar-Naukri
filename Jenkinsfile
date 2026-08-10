@@ -110,23 +110,35 @@ pipeline {
 
         stage('Prepare Bundled JRE') {
             steps {
-                bat '''
-                if not exist "electron\\resources\\jre" (
-                    mkdir "electron\\resources\\jre"
-                )
+            bat '''
+            echo ====================================
+            echo Preparing Bundled JRE
+            echo ====================================
 
-                xcopy "C:\\Tools\\Naukri\\jre\\*" ^
-                      "electron\\resources\\jre\\" ^
-                      /E /I /Y
+            if not exist "C:\\Tools\\Naukri\\jre\\bin\\java.exe" (
+                echo ERROR: Bundled JRE does not exist.
+                echo Expected:
+                echo C:\\Tools\\Naukri\\jre\\bin\\java.exe
+                exit /b 1
+             )
+    
+        if not exist "electron\\resources\\jre" (
+            mkdir "electron\\resources\\jre"
+        )
 
-                if errorlevel 1 (
-                    echo ERROR: Failed to copy bundled JRE.
-                    exit /b 1
-                )
-                '''
-            }
-        }
+        xcopy "C:\\Tools\\Naukri\\jre\\*" ^
+              "electron\\resources\\jre\\" ^
+              /E /I /Y
 
+        if errorlevel 1 (
+            echo ERROR: Failed to copy bundled JRE.
+            exit /b 1
+        )
+
+        echo Bundled JRE copied successfully.
+        '''
+    }
+}
 
         // ==========================================================
         // SONARQUBE ANALYSIS

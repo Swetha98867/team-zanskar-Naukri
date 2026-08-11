@@ -27,7 +27,7 @@ pipeline {
         ANSIBLE_USER = 'azureuser'
 
         // SSH private key on Jenkins Windows VM
-        SSH_KEY = 'C:\\Users\\azureuser\\.ssh\\id_ed25519'
+        SSH_KEY = 'C:\\ProgramData\\Jenkins\\.ssh\\id_ed25519'
 
         // Temporary files
         ANSIBLE_VARS_FILE = 'ansible-vars.json'
@@ -442,6 +442,29 @@ pipeline {
         // ==========================================================
         // 9. COPY VARIABLES TO ANSIBLE VM
         // ==========================================================
+        stage('Test Ansible SSH') {
+    steps {
+
+        echo '===================================='
+        echo 'TEST JENKINS TO ANSIBLE SSH'
+        echo '===================================='
+
+        bat '''
+        ssh -i "%SSH_KEY%" ^
+            -o StrictHostKeyChecking=no ^
+            -o UserKnownHostsFile=NUL ^
+            %ANSIBLE_USER%@%ANSIBLE_VM% ^
+            "cd ~/naukri-ansible && ansible --version"
+
+        if errorlevel 1 (
+            echo ERROR: Jenkins cannot connect to Ansible VM.
+            exit /b 1
+        )
+
+        echo Jenkins to Ansible SSH connection successful.
+        '''
+    }
+}
 
         stage('Transfer Deployment Variables') {
             steps {

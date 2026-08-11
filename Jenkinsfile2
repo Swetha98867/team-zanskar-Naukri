@@ -502,27 +502,26 @@ pipeline {
                     exit /b 1
                 )
 
-                echo ====================================
-                echo Naukri deployment verified on vm-2.
-                echo ====================================
-                '''
-
-
                 echo '===================================='
-                echo 'CLEAN REMOTE TEMP FILE'
-                echo '===================================='
+echo 'VERIFY DEPLOYMENT'
+echo '===================================='
 
-                bat '''
-                ssh -i "%SSH_KEY%" ^
-                    -o StrictHostKeyChecking=no ^
-                    -o UserKnownHostsFile=NUL ^
-                    %ANSIBLE_USER%@%ANSIBLE_VM% ^
-                    "rm -f /tmp/naukri-ansible-vars.json"
-                '''
-            }
-        }
-    }
+bat '''
+ssh -i "%SSH_KEY%" ^
+    -o StrictHostKeyChecking=no ^
+    -o UserKnownHostsFile=NUL ^
+    %ANSIBLE_USER%@%ANSIBLE_VM% ^
+    "cd ~/naukri-ansible && ansible windows -i inventory.ini -m ansible.windows.win_shell -a ^"Test-Path 'C:\\Deployments\\Naukri\\NaukriAutomator 0.1.0.exe'^""
 
+if errorlevel 1 (
+    echo ERROR: Deployment verification failed.
+    exit /b 1
+)
+
+echo ====================================
+echo Naukri deployment verified on vm-2.
+echo ====================================
+'''
 
     // ==============================================================
     // POST ACTIONS

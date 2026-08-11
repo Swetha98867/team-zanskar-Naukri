@@ -1,0 +1,589 @@
+pipeline {
+
+    agent any
+
+    tools {
+        jdk 'JDK21'
+        maven 'Maven-3.9.16'
+        nodejs 'NodeJS-24'
+    }
+
+    environment {
+
+        // ==========================================================
+        // AZURE STORAGE
+        // ==========================================================
+
+        AZURE_STORAGE_ACCOUNT = 'naukribuildartifacts'
+        BACKEND_CONTAINER = 'backend-artifacts'
+        FRONTEND_CONTAINER = 'frontend-artifacts'
+        ELECTRON_CONTAINER = 'electron-artifacts'
+
+        // ==========================================================
+        // ANSIBLE CONTROLLER
+        // ==========================================================
+
+        ANSIBLE_VM = '20.106.135.146'
+        ANSIBLE_USER = 'azureuser'
+
+        // SSH private key on Jenkins Windows VM
+        SSH_KEY = 'C:\\Users\\azureuser\\.ssh\\id_ed25519'
+
+        // Temporary files
+        ANSIBLE_VARS_FILE = 'ansible-vars.json'
+    }
+
+
+    stages {
+
+        // ==========================================================
+        // 1. CHECKOUT
+        // ==========================================================
+
+        stage('Checkout') {
+            steps {
+
+                echo '===================================='
+                echo 'CHECKOUT'
+                echo '===================================='
+
+                git branch: 'main',
+                    url: 'https://github.com/Swetha98867/team-zanskar-Naukri.git'
+            }
+        }
+
+
+        // ==========================================================
+        // 2. BUILD & TEST
+        // ==========================================================
+
+        stage('Build & Test') {
+            steps {
+
+                echo '===================================='
+                echo 'BACKEND BUILD'
+                echo '===================================='
+
+                dir('backend') {
+                    bat 'mvn clean verify'
+                }
+
+
+                echo '===================================='
+                echo 'BACKEND TEST'
+                echo '===================================='
+
+                dir('backend') {
+                    bat 'mvn test'
+                }
+
+
+                echo '===================================='
+                echo 'FRONTEND BUILD'
+                echo '===================================='
+
+                dir('frontend') {
+                    bat 'npm install'
+                    bat 'npm run build'
+                }
+
+
+                echo '===================================='
+                echo 'VERIFY BUILD ARTIFACTS'
+                echo '===================================='
+
+                bat '''
+                if not exist "backend\\target\\naukri-be.jar" (
+                    echo ERROR: Backend JAR not found!
+                    exit /b 1
+                )
+
+                if not exist "frontend\\dist\\index.html" (
+                    echo ERROR: Frontend build not found!
+                    exit /b 1
+                )
+
+                echo Backend JAR and Frontend artifacts are available.
+                '''
+            }
+        }
+
+
+        // ==========================================================
+        // 3. ELECTRON PACKAGE PREPARATION
+        // ==========================================================
+
+        stage('Electron Package Preparation') {
+            steps {
+
+                echo '===================================='
+                echo 'COPY FRONTEND TO ELECTRON'
+                echo '===================================='
+
+                bat '''
+                if exist "electron\\renderer" (
+                    rmdir /S /Q "electron\\renderer"
+                )
+
+                xcopy "frontend\\dist" "electron\\renderer" /E /I /Y
+
+                if errorlevel 1 (
+                    echo ERROR: Failed to copy frontend to Electron.
+                    exit /b 1
+                )
+                '''
+
+
+                echo '===================================='
+                echo 'INSTALL ELECTRON DEPENDENCIES'
+                echo '===================================='
+
+                dir('electron') {
+                    bat 'npm install'
+                }
+
+
+                echo '===================================='
+                echo 'PREPARE BUNDLED JRE'
+                echo '===================================='
+
+                bat '''
+                if not exist "C:\\Tools\\Naukri\\jre\\bin\\java.exe" (
+                    echo ERROR: Bundled JRE not found!
+                    echo Expected:
+                    echo C:\\Tools\\Naukri\\jre\\bin\\java.exe
+                    exit /b 1
+                )
+
+                if not exist "electron\\resources\\jre" (
+                    mkdir "electron\\resources\\jre"
+                )
+
+                xcopy "C:\\Tools\\Naukri\\jre\\*" ^
+                      "electron\\resources\\jre\\" ^
+                      /E /I /Y
+
+                if errorlevel 1 (
+                    echo ERROR: Failed to copy bundled JRE.
+                    exit /b 1
+                )
+
+                echo Bundled JRE copied successfully.
+                '''
+
+
+                echo '===================================='
+                echo 'VERIFY ELECTRON RESOURCES'
+                echo '===================================='
+
+                bat '''
+                if not exist "electron\\resources\\jre\\bin\\java.exe" (
+                    echo ERROR: Electron JRE missing!
+                    exit /b 1
+                )
+
+                if not exist "backend\\target\\naukri-be.jar" (
+                    echo ERROR: Backend JAR missing!
+                    exit /b 1
+                )
+
+                echo Electron resources verified successfully.
+                '''
+            }
+        }
+
+
+        // ==========================================================
+        // 4. SONARQUBE + QUALITY GATE
+        // ==========================================================
+
+        stage('SonarQube + Quality Gate') {
+            steps {
+
+                echo '===================================='
+                echo 'SONARQUBE ANALYSIS'
+                echo '===================================='
+
+                withSonarQubeEnv('SonarQube') {
+
+                    dir('backend') {
+
+                        bat '''
+                        mvn sonar:sonar ^
+                        -Dsonar.projectKey=Naukri ^
+                        -Dsonar.projectName=Naukri ^
+                        -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                        '''
+                    }
+                }
+
+
+                echo '===================================='
+                echo 'WAITING FOR QUALITY GATE'
+                echo '===================================='
+
+                timeout(time: 10, unit: 'MINUTES') {
+
+                    waitForQualityGate abortPipeline: true
+                }
+
+
+                echo '===================================='
+                echo 'QUALITY GATE PASSED'
+                echo '===================================='
+            }
+        }
+
+
+        // ==========================================================
+        // 5. PACKAGE & ARCHIVE
+        // ==========================================================
+
+        stage('Package & Archive') {
+            steps {
+
+                echo '===================================='
+                echo 'BUILDING ELECTRON APPLICATION'
+                echo '===================================='
+
+                dir('electron') {
+
+                    bat 'npm run dist'
+                }
+
+
+                echo '===================================='
+                echo 'VERIFY ELECTRON ARTIFACTS'
+                echo '===================================='
+
+                bat '''
+                if not exist "dist\\NaukriAutomator 0.1.0.exe" (
+                    echo ERROR: Electron portable EXE not found!
+                    exit /b 1
+                )
+
+                if not exist "dist\\NaukriAutomator Setup 0.1.0.exe" (
+                    echo ERROR: Electron installer not found!
+                    exit /b 1
+                )
+
+                echo Electron artifacts found successfully.
+                '''
+
+
+                echo '===================================='
+                echo 'ARCHIVING JENKINS ARTIFACTS'
+                echo '===================================='
+
+                archiveArtifacts(
+                    artifacts: 'backend/target/*.jar,dist/**/*.exe,dist/**/*.zip',
+                    fingerprint: true
+                )
+
+                echo 'Artifacts archived successfully.'
+            }
+        }
+
+
+        // ==========================================================
+        // 6. AZURE LOGIN + BACKEND/FRONTEND UPLOAD
+        // ==========================================================
+
+        stage('Upload Backend & Frontend to Azure') {
+            steps {
+
+                echo '===================================='
+                echo 'AZURE LOGIN'
+                echo '===================================='
+
+                bat '''
+                az login --identity
+
+                if errorlevel 1 (
+                    echo ERROR: Azure Managed Identity login failed.
+                    exit /b 1
+                )
+
+                echo Azure login successful.
+                '''
+
+
+                echo '===================================='
+                echo 'UPLOAD BACKEND ARTIFACT'
+                echo '===================================='
+
+                bat '''
+                az storage blob upload ^
+                    --account-name %AZURE_STORAGE_ACCOUNT% ^
+                    --container-name %BACKEND_CONTAINER% ^
+                    --name naukri-be.jar ^
+                    --file "backend\\target\\naukri-be.jar" ^
+                    --auth-mode login ^
+                    --overwrite true
+
+                if errorlevel 1 (
+                    echo ERROR: Backend upload failed.
+                    exit /b 1
+                )
+
+                echo Backend artifact uploaded successfully.
+                '''
+
+
+                echo '===================================='
+                echo 'UPLOAD FRONTEND ARTIFACTS'
+                echo '===================================='
+
+                bat '''
+                az storage blob upload-batch ^
+                    --account-name %AZURE_STORAGE_ACCOUNT% ^
+                    --destination %FRONTEND_CONTAINER% ^
+                    --source "frontend\\dist" ^
+                    --auth-mode login ^
+                    --overwrite
+
+                if errorlevel 1 (
+                    echo ERROR: Frontend upload failed.
+                    exit /b 1
+                )
+
+                echo Frontend artifacts uploaded successfully.
+                '''
+            }
+        }
+
+
+        // ==========================================================
+        // 7. UPLOAD ELECTRON EXE
+        // ==========================================================
+
+        stage('Upload Electron Artifact') {
+            steps {
+
+                echo '===================================='
+                echo 'UPLOAD ELECTRON EXE TO AZURE'
+                echo '===================================='
+
+                bat '''
+                if not exist "dist\\NaukriAutomator 0.1.0.exe" (
+                    echo ERROR: Electron EXE not found!
+                    exit /b 1
+                )
+
+                az storage blob upload ^
+                    --account-name %AZURE_STORAGE_ACCOUNT% ^
+                    --container-name %ELECTRON_CONTAINER% ^
+                    --name NaukriAutomator-0.1.0.exe ^
+                    --file "dist\\NaukriAutomator 0.1.0.exe" ^
+                    --auth-mode login ^
+                    --overwrite true
+
+                if errorlevel 1 (
+                    echo ERROR: Electron artifact upload failed.
+                    exit /b 1
+                )
+
+                echo Electron EXE uploaded successfully.
+                '''
+            }
+        }
+
+
+        // ==========================================================
+        // 8. CREATE TEMPORARY SAS URL
+        // ==========================================================
+
+        stage('Prepare Ansible Deployment') {
+            steps {
+
+                echo '===================================='
+                echo 'GENERATE TEMPORARY AZURE DOWNLOAD URL'
+                echo '===================================='
+
+                powershell '''
+                $ErrorActionPreference = "Stop"
+
+                $expiry = (Get-Date).ToUniversalTime().AddHours(2).ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+                Write-Host "Generating temporary SAS URL..."
+
+                $url = az storage blob generate-sas `
+                    --account-name "$env:AZURE_STORAGE_ACCOUNT" `
+                    --container-name "$env:ELECTRON_CONTAINER" `
+                    --name "NaukriAutomator-0.1.0.exe" `
+                    --permissions r `
+                    --expiry "$expiry" `
+                    --https-only `
+                    --auth-mode login `
+                    --as-user `
+                    --full-uri `
+                    -o tsv
+
+                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($url)) {
+                    throw "Failed to generate Azure Blob SAS URL."
+                }
+
+                $url = $url.Trim()
+
+                $vars = @{
+                    naukri_download_url = $url
+                }
+
+                $vars |
+                    ConvertTo-Json -Compress |
+                    Set-Content -Path "$env:ANSIBLE_VARS_FILE" -Encoding UTF8
+
+                Write-Host "Ansible variables file created successfully."
+                '''
+            }
+        }
+
+
+        // ==========================================================
+        // 9. COPY VARIABLES TO ANSIBLE VM
+        // ==========================================================
+
+        stage('Transfer Deployment Variables') {
+            steps {
+
+                echo '===================================='
+                echo 'TRANSFER DEPLOYMENT VARIABLES'
+                echo '===================================='
+
+                bat '''
+                if not exist "%ANSIBLE_VARS_FILE%" (
+                    echo ERROR: Ansible variables file not found.
+                    exit /b 1
+                }
+
+                scp -i "%SSH_KEY%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -o UserKnownHostsFile=NUL ^
+                    "%ANSIBLE_VARS_FILE%" ^
+                    %ANSIBLE_USER%@%ANSIBLE_VM%:/tmp/naukri-ansible-vars.json
+
+                if errorlevel 1 (
+                    echo ERROR: Failed to transfer deployment variables.
+                    exit /b 1
+                )
+
+                echo Deployment variables transferred successfully.
+                '''
+            }
+        }
+
+
+        // ==========================================================
+        // 10. ANSIBLE DEPLOYMENT
+        // ==========================================================
+
+        stage('Ansible Deployment') {
+            steps {
+
+                echo '===================================='
+                echo 'ANSIBLE DEPLOYMENT'
+                echo '===================================='
+
+                bat '''
+                ssh -i "%SSH_KEY%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -o UserKnownHostsFile=NUL ^
+                    %ANSIBLE_USER%@%ANSIBLE_VM% ^
+                    "cd ~/naukri-ansible && ansible-playbook -i inventory.ini deploy-naukri.yml -e @/tmp/naukri-ansible-vars.json"
+
+                if errorlevel 1 (
+                    echo ERROR: Ansible deployment failed.
+                    exit /b 1
+                )
+
+                echo Ansible deployment completed successfully.
+                '''
+            }
+        }
+
+
+        // ==========================================================
+        // 11. VERIFY REMOTE DEPLOYMENT
+        // ==========================================================
+
+        stage('Verify Deployment') {
+            steps {
+
+                echo '===================================='
+                echo 'VERIFY WINDOWS VM-2 DEPLOYMENT'
+                echo '===================================='
+
+                bat '''
+                ssh -i "%SSH_KEY%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -o UserKnownHostsFile=NUL ^
+                    %ANSIBLE_USER%@%ANSIBLE_VM% ^
+                    "cd ~/naukri-ansible && ansible windows -i inventory.ini -m ansible.windows.win_shell -a \\"Get-Item 'C:\\\\Deployments\\\\Naukri\\\\NaukriAutomator 0.1.0.exe' | Select-Object Name,Length,LastWriteTime\\""
+
+                if errorlevel 1 (
+                    echo ERROR: Remote deployment verification failed.
+                    exit /b 1
+                )
+
+                echo Remote deployment verified successfully.
+                '''
+            }
+        }
+    }
+
+
+    // ==============================================================
+    // POST
+    // ==============================================================
+
+    post {
+
+        success {
+
+            echo '''
+            ==========================================
+            NAUKRI CI/CD PIPELINE SUCCESSFUL
+            ==========================================
+
+            CI:
+            GitHub
+              -> Build
+              -> Test
+              -> SonarQube
+              -> Quality Gate
+              -> Electron EXE
+
+            CD:
+            Azure Blob Storage
+              -> Ubuntu Ansible Controller
+              -> Windows VM-2
+              -> C:\\Deployments\\Naukri
+
+            ==========================================
+            '''
+        }
+
+
+        failure {
+
+            echo '''
+            ==========================================
+            NAUKRI CI/CD PIPELINE FAILED
+            ==========================================
+            '''
+        }
+
+
+        always {
+
+            // Remove temporary SAS variables file
+            bat '''
+            if exist "%ANSIBLE_VARS_FILE%" (
+                del /F /Q "%ANSIBLE_VARS_FILE%"
+            )
+            '''
+
+            cleanWs()
+        }
+    }
+}

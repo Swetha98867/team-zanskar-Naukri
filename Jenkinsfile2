@@ -378,135 +378,127 @@ pipeline {
                 '''
             }
         }
+                // ==========================================================
+        // ANSIBLE DEPLOYMENT
+        // ==========================================================
+
+        stage('Ansible Deploy & Verify') {
+            steps {
+
+                echo '===================================='
+                echo 'GENERATE TEMPORARY SAS URL'
+                echo '===================================='
+
+                powershell '''
+                $ErrorActionPreference = "Stop"
+
+                $expiry = (Get-Date).ToUniversalTime().
+                    AddHours(2).
+                    ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+                Write-Host "Generating temporary Azure Blob SAS URL..."
+
+                $url = az storage blob generate-sas `
+                    --account-name "$env:AZURE_STORAGE_ACCOUNT" `
+                    --container-name "$env:ELECTRON_CONTAINER" `
+                    --name "NaukriAutomator-0.1.0.exe" `
+                    --permissions r `
+                    --expiry "$expiry" `
+                    --https-only `
+                    --auth-mode login `
+                    --as-user `
+                    --full-uri `
+                    -o tsv
+
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failed to generate SAS URL."
+                }
+
+                if ([string]::IsNullOrWhiteSpace($url)) {
+                    throw "Generated SAS URL is empty."
+                }
+
+                $url = $url.Trim()
+
+                Write-Host "SAS URL generated successfully."
+
+                $json = @{
+                    naukri_download_url = $url
+                } | ConvertTo-Json -Compress
+
+                $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+                [System.IO.File]::WriteAllText(
+                    "$env:ANSIBLE_VARS_FILE",
+                    $json,
+                    $utf8NoBom
+                )
+
+                Write-Host "Ansible variables file created."
+                '''
 
 
-// ==========================================================
-// 7. ANSIBLE DEPLOYMENT
-// ==========================================================
+                echo '===================================='
+                echo 'TRANSFER VARIABLES TO ANSIBLE VM'
+                echo '===================================='
 
-stage('Ansible Deploy & Verify') {
-    steps {
+                bat '''
+                if not exist "%ANSIBLE_VARS_FILE%" (
+                    echo ERROR: Ansible variables file not found!
+                    exit /b 1
+                )
 
-        echo '===================================='
-        echo 'GENERATE TEMPORARY SAS URL'
-        echo '===================================='
+                scp -i "%SSH_KEY%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -o UserKnownHostsFile=NUL ^
+                    "%ANSIBLE_VARS_FILE%" ^
+                    %ANSIBLE_USER%@%ANSIBLE_VM%:/tmp/naukri-ansible-vars.json
 
-        powershell '''
-        $ErrorActionPreference = "Stop"
+                if errorlevel 1 (
+                    echo ERROR: Failed to transfer Ansible variables.
+                    exit /b 1
+                )
 
-        $expiry = (Get-Date).ToUniversalTime().
-            AddHours(2).
-            ToString("yyyy-MM-ddTHH:mm:ssZ")
+                echo Variables transferred successfully.
+                '''
 
-        Write-Host "Generating temporary Azure Blob SAS URL..."
 
-        $url = az storage blob generate-sas `
-            --account-name "$env:AZURE_STORAGE_ACCOUNT" `
-            --container-name "$env:ELECTRON_CONTAINER" `
-            --name "NaukriAutomator-0.1.0.exe" `
-            --permissions r `
-            --expiry "$expiry" `
-            --https-only `
-            --auth-mode login `
-            --as-user `
-            --full-uri `
-            -o tsv
+                echo '===================================='
+                echo 'RUN ANSIBLE PLAYBOOK'
+                echo '===================================='
 
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to generate SAS URL."
+                bat '''
+                ssh -i "%SSH_KEY%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -o UserKnownHostsFile=NUL ^
+                    %ANSIBLE_USER%@%ANSIBLE_VM% ^
+                    "cd ~/naukri-ansible && ansible-playbook -i inventory.ini deploy-naukri.yml -e @/tmp/naukri-ansible-vars.json"
+
+                if errorlevel 1 (
+                    echo ERROR: Ansible deployment failed.
+                    exit /b 1
+                )
+
+                echo Ansible deployment completed successfully.
+                '''
+
+
+                echo '===================================='
+                echo 'CLEAN REMOTE TEMP FILE'
+                echo '===================================='
+
+                bat '''
+                ssh -i "%SSH_KEY%" ^
+                    -o StrictHostKeyChecking=no ^
+                    -o UserKnownHostsFile=NUL ^
+                    %ANSIBLE_USER%@%ANSIBLE_VM% ^
+                    "rm -f /tmp/naukri-ansible-vars.json"
+
+                echo Remote temporary file cleanup completed.
+                '''
+            }
         }
-
-        if ([string]::IsNullOrWhiteSpace($url)) {
-            throw "Generated SAS URL is empty."
-        }
-
-        $url = $url.Trim()
-
-        Write-Host "SAS URL generated successfully."
-
-        $json = @{
-            naukri_download_url = $url
-        } | ConvertTo-Json -Compress
-
-        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-
-        [System.IO.File]::WriteAllText(
-            "$env:ANSIBLE_VARS_FILE",
-            $json,
-            $utf8NoBom
-        )
-
-        Write-Host "Ansible variables file created."
-        '''
-
-
-        echo '===================================='
-        echo 'TRANSFER VARIABLES TO ANSIBLE VM'
-        echo '===================================='
-
-        bat '''
-        if not exist "%ANSIBLE_VARS_FILE%" (
-            echo ERROR: Ansible variables file not found!
-            exit /b 1
-        )
-
-        scp -i "%SSH_KEY%" ^
-            -o StrictHostKeyChecking=no ^
-            -o UserKnownHostsFile=NUL ^
-            "%ANSIBLE_VARS_FILE%" ^
-            %ANSIBLE_USER%@%ANSIBLE_VM%:/tmp/naukri-ansible-vars.json
-
-        if errorlevel 1 (
-            echo ERROR: Failed to transfer Ansible variables.
-            exit /b 1
-        )
-
-        echo Variables transferred successfully.
-        '''
-
-
-        echo '===================================='
-        echo 'RUN ANSIBLE PLAYBOOK'
-        echo '===================================='
-
-        bat '''
-        ssh -i "%SSH_KEY%" ^
-            -o StrictHostKeyChecking=no ^
-            -o UserKnownHostsFile=NUL ^
-            %ANSIBLE_USER%@%ANSIBLE_VM% ^
-            "cd ~/naukri-ansible && ansible-playbook -i inventory.ini deploy-naukri.yml -e @/tmp/naukri-ansible-vars.json"
-
-        if errorlevel 1 (
-            echo ERROR: Ansible deployment failed.
-            exit /b 1
-        )
-
-        echo Ansible deployment completed successfully.
-        '''
-
-
-        echo '===================================='
-        echo 'CLEAN REMOTE TEMP FILE'
-        echo '===================================='
-
-        bat '''
-        ssh -i "%SSH_KEY%" ^
-            -o StrictHostKeyChecking=no ^
-            -o UserKnownHostsFile=NUL ^
-            %ANSIBLE_USER%@%ANSIBLE_VM% ^
-            "rm -f /tmp/naukri-ansible-vars.json"
-
-        if errorlevel 1 (
-            echo WARNING: Could not remove remote temporary variables file.
-        )
-
-        echo Remote temporary file cleanup completed.
-        '''
     }
-}
-    // ==============================================================
-    // POST ACTIONS
-    // ==============================================================
 
     post {
 
@@ -566,7 +558,6 @@ stage('Ansible Deploy & Verify') {
             '''
         }
 
-
         failure {
 
             echo '''
@@ -575,7 +566,6 @@ stage('Ansible Deploy & Verify') {
             ==========================================
             '''
         }
-
 
         always {
 
@@ -591,3 +581,4 @@ stage('Ansible Deploy & Verify') {
         }
     }
 }
+    

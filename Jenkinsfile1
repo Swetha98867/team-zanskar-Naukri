@@ -311,92 +311,128 @@ pipeline {
         }
 
 
-        // ==========================================================
-        // 7. DEPLOY
-        // ==========================================================
+       // ==========================================================
+// 7. DEPLOY
+// ==========================================================
 
-        stage('Deploy') {
-            steps {
+stage('Deploy') {
+    steps {
 
-                echo '===================================='
-                echo 'LOCAL DEPLOYMENT'
-                echo '===================================='
+        echo '===================================='
+        echo 'LOCAL DEPLOYMENT'
+        echo '===================================='
 
-                bat '''
-                if not exist "%DEPLOY_DIR%" (
-                    mkdir "%DEPLOY_DIR%"
-                )
+        bat '''
+        echo Checking generated Electron artifacts...
 
-                echo Removing old deployment files...
+        if not exist "dist\\NaukriAutomator 0.1.0.exe" (
+            echo ERROR: Electron EXE not found in dist!
+            exit /b 1
+        )
 
-                del /Q "%DEPLOY_DIR%\\*.exe" 2>NUL
-                del /Q "%DEPLOY_DIR%\\*.jar" 2>NUL
+        if not exist "dist\\NaukriAutomator Setup 0.1.0.exe" (
+            echo ERROR: Electron installer not found in dist!
+            exit /b 1
+        )
 
+        echo Electron artifacts found successfully.
 
-                echo Copying backend JAR...
+        echo.
+        echo ====================================
+        echo CREATING DEPLOYMENT DIRECTORY
+        echo ====================================
 
-                copy /Y backend\\target\\*.jar "%DEPLOY_DIR%\\"
+        if not exist "%DEPLOY_DIR%" (
+            mkdir "%DEPLOY_DIR%"
+        )
 
-                if errorlevel 1 (
-                    echo ERROR: Backend deployment failed.
-                    exit /b 1
-                )
+        echo.
+        echo ====================================
+        echo STOPPING OLD NAUKRI APPLICATION
+        echo ====================================
 
+        taskkill /F /IM "NaukriAutomator 0.1.0.exe" >NUL 2>&1
+        taskkill /F /IM "NaukriAutomator.exe" >NUL 2>&1
 
-                echo Copying Electron EXE...
+        timeout /T 2 /NOBREAK >NUL
 
-                copy /Y dist\\*.exe "%DEPLOY_DIR%\\"
+        echo.
+        echo ====================================
+        echo REMOVING OLD DEPLOYMENT
+        echo ====================================
 
-                if errorlevel 1 (
-                    echo ERROR: Electron deployment failed.
-                    exit /b 1
-                )
+        del /F /Q "%DEPLOY_DIR%\\NaukriAutomator 0.1.0.exe" >NUL 2>&1
+        del /F /Q "%DEPLOY_DIR%\\NaukriAutomator Setup 0.1.0.exe" >NUL 2>&1
+        del /F /Q "%DEPLOY_DIR%\\naukri-be.jar" >NUL 2>&1
 
+        echo Old deployment removed.
 
-                echo.
-                echo ====================================
-                echo DEPLOYED FILES
-                echo ====================================
+        echo.
+        echo ====================================
+        echo DEPLOYING BACKEND
+        echo ====================================
 
-                dir "%DEPLOY_DIR%"
+        copy /Y "backend\\target\\naukri-be.jar" "%DEPLOY_DIR%\\naukri-be.jar"
 
-                echo.
-                echo ====================================
-                echo DEPLOYMENT SUCCESSFUL
-                echo ====================================
-                '''
-            }
-        }
-    }
+        if errorlevel 1 (
+            echo ERROR: Backend deployment failed.
+            exit /b 1
+        )
 
+        echo Backend deployed successfully.
 
-    // ==========================================================
-    // POST ACTIONS
-    // ==========================================================
+        echo.
+        echo ====================================
+        echo DEPLOYING ELECTRON APPLICATION
+        echo ====================================
 
-    post {
+        copy /Y "dist\\NaukriAutomator 0.1.0.exe" "%DEPLOY_DIR%\\NaukriAutomator 0.1.0.exe"
 
-        success {
+        if errorlevel 1 (
+            echo ERROR: Electron portable EXE deployment failed.
+            exit /b 1
+        )
 
-            echo '''
-            ==========================================
-            NAUKRI CI/CD PIPELINE SUCCESSFUL
-            ==========================================
-            '''
-        }
+        copy /Y "dist\\NaukriAutomator Setup 0.1.0.exe" "%DEPLOY_DIR%\\NaukriAutomator Setup 0.1.0.exe"
 
-        failure {
+        if errorlevel 1 (
+            echo ERROR: Electron installer deployment failed.
+            exit /b 1
+        )
 
-            echo '''
-            ==========================================
-            NAUKRI CI/CD PIPELINE FAILED
-            ==========================================
-            '''
-        }
+        echo Electron application deployed successfully.
 
-        always {
+        echo.
+        echo ====================================
+        echo VERIFYING DEPLOYMENT
+        echo ====================================
 
-            cleanWs()
-        }
+        if not exist "%DEPLOY_DIR%\\naukri-be.jar" (
+            echo ERROR: Backend JAR missing after deployment.
+            exit /b 1
+        )
+
+        if not exist "%DEPLOY_DIR%\\NaukriAutomator 0.1.0.exe" (
+            echo ERROR: Electron EXE missing after deployment.
+            exit /b 1
+        )
+
+        if not exist "%DEPLOY_DIR%\\NaukriAutomator Setup 0.1.0.exe" (
+            echo ERROR: Electron installer missing after deployment.
+            exit /b 1
+        )
+
+        echo.
+        echo ====================================
+        echo DEPLOYED FILES
+        echo ====================================
+
+        dir "%DEPLOY_DIR%"
+
+        echo.
+        echo ====================================
+        echo DEPLOYMENT SUCCESSFUL
+        echo ====================================
+        '''
     }
 }

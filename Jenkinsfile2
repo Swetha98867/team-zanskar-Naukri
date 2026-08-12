@@ -23,7 +23,7 @@ pipeline {
         // ANSIBLE CONTROLLER
         // ==========================================================
 
-        ANSIBLE_VM   = '20.106.135.146'
+        ANSIBLE_VM   = '20.235.30.124'
         ANSIBLE_USER = 'azureuser'
 
         // SSH key accessible by Jenkins LocalSystem

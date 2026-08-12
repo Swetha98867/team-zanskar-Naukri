@@ -472,7 +472,7 @@ pipeline {
                     -o StrictHostKeyChecking=no ^
                     -o UserKnownHostsFile=NUL ^
                     %ANSIBLE_USER%@%ANSIBLE_VM% ^
-                    "cd ~/naukri-ansible && ansible-playbook -i inventory.ini deploy-naukri.yml -e @/tmp/naukri-ansible-vars.json"
+                    "cd ~/naukri-ansible && source ~/ansible-venv/bin/activate && ansible-playbook -i inventory.ini deploy-naukri.yml -e @/tmp/naukri-ansible-vars.json"
 
                 if errorlevel 1 (
                     echo ERROR: Ansible deployment failed.

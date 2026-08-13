@@ -14,7 +14,7 @@ pipeline {
         // AZURE STORAGE
         // ==========================================================
 
-        AZURE_STORAGE_ACCOUNT = 'naukribuildartifacts'
+        AZURE_STORAGE_ACCOUNT = 'naukribuildartifact'
         BACKEND_CONTAINER     = 'backend-artifacts'
         FRONTEND_CONTAINER    = 'frontend-artifacts'
         ELECTRON_CONTAINER    = 'electron-artifacts'

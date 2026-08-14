@@ -1,0 +1,118 @@
+
+---
+- name: Deploy Naukri application
+  hosts: windows
+  gather_facts: no
+
+  vars:
+    app_dir: 'C:/Naukri'
+    backend_dir: 'C:/Naukri/backend'
+    frontend_dir: 'C:/Naukri/frontend'
+    java_dir: 'C:/Program Files/Microsoft/jdk-21'
+
+  tasks:
+
+    - name: Create application directory
+      ansible.windows.win_file:
+        path: "{{ app_dir }}"
+        state: directory
+
+    - name: Create backend directory
+      ansible.windows.win_file:
+        path: "{{ backend_dir }}"
+        state: directory
+
+    - name: Create frontend directory
+      ansible.windows.win_file:
+        path: "{{ frontend_dir }}"
+        state: directory
+
+    - name: Check Java
+      ansible.windows.win_shell:
+        cmd: |
+          if (Test-Path "{{ java_dir }}/bin/java.exe") {
+              Write-Output "JAVA_EXISTS"
+          } else {
+              Write-Output "JAVA_MISSING"
+          }
+      register: java_check
+
+    - name: Download Java 21
+      ansible.windows.win_get_url:
+        url: https://aka.ms/download-jdk/microsoft-jdk-21-windows-x64.msi
+        dest: C:/Naukri/microsoft-jdk-21.msi
+      when: "'JAVA_MISSING' in java_check.stdout"
+
+    - name: Install Java 21
+      ansible.windows.win_package:
+        path: C:/Naukri/microsoft-jdk-21.msi
+        state: present
+      when: "'JAVA_MISSING' in java_check.stdout"
+
+    - name: Check Java installation
+      ansible.windows.win_stat:
+        path: "{{ java_dir }}/bin/java.exe"
+      register: java_binary
+
+    - name: Fail if Java is missing
+      ansible.builtin.fail:
+        msg: "Java 21 was not found on the deployment VM."
+      when: not java_binary.stat.exists
+
+    - name: Download backend JAR
+      ansible.windows.win_get_url:
+        url: "{{ backend_jar_url }}"
+        dest: "{{ backend_dir }}/naukri-be.jar"
+        force: yes
+
+    - name: Download frontend ZIP
+      ansible.windows.win_get_url:
+        url: "{{ frontend_dist_url }}"
+        dest: "{{ app_dir }}/frontend-dist.zip"
+        force: yes
+
+    - name: Remove old frontend
+      ansible.windows.win_file:
+        path: "{{ frontend_dir }}"
+        state: absent
+
+    - name: Create frontend directory
+      ansible.windows.win_file:
+        path: "{{ frontend_dir }}"
+        state: directory
+
+    - name: Extract frontend
+      community.windows.win_unzip:
+        src: "{{ app_dir }}/frontend-dist.zip"
+        dest: "{{ frontend_dir }}"
+        delete_archive: no
+
+    - name: Stop existing backend
+      ansible.windows.win_shell: |
+        Get-CimInstance Win32_Process -Filter "Name = 'java.exe'" |
+        Where-Object { $_.CommandLine -like '*naukri-be.jar*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+      ignore_errors: yes
+
+    - name: Start backend
+      ansible.windows.win_shell: |
+        Start-Process `
+          -FilePath "{{ java_dir }}/bin/java.exe" `
+          -ArgumentList '-jar "{{ backend_dir }}/naukri-be.jar"' `
+          -WorkingDirectory "{{ backend_dir }}"
+
+    - name: Wait for backend
+      ansible.windows.win_wait_for:
+        host: 127.0.0.1
+        port: 8086
+        timeout: 60
+
+    - name: Check backend health
+      ansible.windows.win_uri:
+        url: http://localhost:8086/api/health
+        method: GET
+        return_content: yes
+
+    - name: Deployment successful
+      ansible.builtin.debug:
+        msg: "Naukri backend and frontend deployed successfully."

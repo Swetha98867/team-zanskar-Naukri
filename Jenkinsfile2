@@ -525,7 +525,22 @@ echo Frontend ZIP uploaded successfully.
 
         echo Variables transferred successfully.
         '''
+       bat '''
+echo Checking remote Ansible vars file...
 
+ssh -i "%SSH_KEY%" ^
+    -o StrictHostKeyChecking=no ^
+    -o UserKnownHostsFile=NUL ^
+    %ANSIBLE_USER%@%ANSIBLE_VM% ^
+    "ls -lh /tmp/naukri-ansible-vars.json"
+
+if errorlevel 1 (
+    echo ERROR: Remote vars file was not transferred.
+    exit /b 1
+)
+
+echo Remote vars file exists successfully.
+'''
         echo '===================================='
         echo 'RUN ANSIBLE DEPLOYMENT'
         echo '===================================='
@@ -610,7 +625,7 @@ echo Frontend ZIP uploaded successfully.
             Windows vm-2
               |
               v
-            C:\\Deployments\\Naukri
+            C:\\Naukri
 
 
             ==========================================

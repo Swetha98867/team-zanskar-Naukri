@@ -1,0 +1,51 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'agent-project1'
+
+stages:
+
+- stage: Build_Backend
+  displayName: 'Backend Build and Test'
+
+  jobs:
+  - job: MavenBuild
+    displayName: 'Maven Build'
+
+    steps:
+
+    - checkout: self
+      displayName: 'Checkout Source Code'
+
+    - task: JavaToolInstaller@0
+      displayName: 'Set Up Java 21'
+      inputs:
+        versionSpec: '21'
+        jdkArchitectureOption: 'x64'
+        jdkSourceOption: 'PreInstalled'
+
+    - task: Maven@4
+      displayName: 'Maven Clean Verify'
+      inputs:
+        mavenPomFile: 'backend/pom.xml'
+        goals: 'clean verify'
+        publishJUnitResults: true
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+
+    - task: Maven@4
+      displayName: 'Maven Test'
+      inputs:
+        mavenPomFile: 'backend/pom.xml'
+        goals: 'test'
+        publishJUnitResults: true
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+
+    - script: |
+        if not exist "backend\target\naukri-be.jar" (
+          echo ERROR: Backend JAR not found
+          exit /b 1
+        )
+        echo Backend JAR found successfully.
+        dir "backend\target\naukri-be.jar"
+      displayName: 'Verify Backend JAR'

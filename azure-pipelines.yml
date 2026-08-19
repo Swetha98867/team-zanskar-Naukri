@@ -2,7 +2,7 @@ trigger:
 - main
 
 pool:
-  vmImage: 'agent-project1'
+  name: 'Naukri-pool'
 
 stages:
 
